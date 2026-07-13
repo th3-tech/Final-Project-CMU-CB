@@ -3,93 +3,120 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chou-Fasman vs. Chameleon Sequences</title>
+<title>Chou-Fasman — Where it fails</title>
+<link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header class="site-header">
-  <div class="header-inner">
-    <div class="titles">
-      <h1>Where Chou-Fasman fails, and why it isn&rsquo;t its fault</h1>
-      <p class="thesis">A 1974 sequence&rarr;structure predictor makes most of its mistakes on
-        <b>chameleons</b> &mdash; short sequences that fold as a helix in one protein and a strand
-        in another. The errors below are computed live in your browser.</p>
-    </div>
-    <div class="controls">
-      <label class="control">
-        <span>Protein</span>
-        <input id="search" type="text" placeholder="search 2001 chains&hellip;" autocomplete="off">
-        <select id="protein" size="1"></select>
-      </label>
-      <label class="control">
-        <span>Chameleon k-mer length</span>
-        <div class="kbtns" id="kbtns">
-          <button data-k="5">5</button>
-          <button data-k="6" class="active">6</button>
-          <button data-k="7">7</button>
-        </div>
-      </label>
-      <label class="control reveal">
-        <span>Truth track</span>
-        <button id="reveal" class="toggle" aria-pressed="true">Shown &mdash; click to hide</button>
-      </label>
+<!-- ░░ app bar ░░ -->
+<header class="appbar" id="appbar">
+  <div class="appbar-inner">
+    <div class="wordmark"><span class="diamond"></span>Chou-Fasman</div>
+    <div class="appbar-controls">
+      <div class="field">
+        <input id="search" type="text" placeholder="search 2,001 chains…" autocomplete="off" spellcheck="false"
+               role="combobox" aria-expanded="false" aria-controls="protein-list">
+        <div id="protein-list" class="protein-list" role="listbox" hidden></div>
+      </div>
+      <div class="kmer" id="kmer" role="tablist" aria-label="chameleon k-mer length">
+        <span class="kmer-pill" aria-hidden="true"></span>
+        <button data-k="5" role="tab">5</button>
+        <button data-k="6" role="tab" aria-selected="true">6</button>
+        <button data-k="7" role="tab">7</button>
+      </div>
+      <button id="reveal" class="switch" aria-pressed="true" title="Show/hide the true structure track">
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-label">truth</span>
+      </button>
+      <button id="custom-btn" class="ghost-btn" title="Analyze your own sequence"><span>＋</span> sequence</button>
     </div>
   </div>
 </header>
 
 <main>
-  <!-- live per-protein stat bar -->
+  <!-- ░░ compact hero ░░ -->
+  <section class="hero-band">
+    <p class="eyebrow">Secondary-structure predictor · 1974</p>
+    <h1 class="hero-title">
+      Where Chou-Fasman fails
+      <button id="info" class="info-btn" aria-label="What is a chameleon?">i</button>
+    </h1>
+  </section>
+
+  <!-- ░░ live stat bar ░░ -->
   <section id="statbar" class="statbar"></section>
 
-  <!-- the hero visual -->
-  <section class="hero">
+  <!-- ░░ hero visual ░░ -->
+  <section class="card hero">
     <div class="hero-head">
       <h2 id="protein-title">&nbsp;</h2>
       <div class="legend" id="legend">
-        <span class="chip"><i class="sw h"></i>H &middot; helix</span>
-        <span class="chip"><i class="sw e"></i>E &middot; strand/sheet</span>
-        <span class="chip"><i class="sw t"></i>T &middot; turn</span>
-        <span class="chip"><i class="sw c"></i>C &middot; coil</span>
-        <span class="chip"><i class="sw alarm"></i>chameleon &middot; &ldquo;same sequence, two shapes&rdquo;</span>
-        <span class="chip"><i class="tick"></i>mismatch &middot; prediction &ne; truth</span>
+        <span class="chip"><i class="sw h"></i>H</span>
+        <span class="chip"><i class="sw e"></i>E</span>
+        <span class="chip"><i class="sw t"></i>T</span>
+        <span class="chip"><i class="sw c"></i>C</span>
+        <span class="chip"><i class="sw alarm"></i>chameleon</span>
+        <span class="chip"><i class="tick"></i>mismatch</span>
       </div>
     </div>
-    <div id="tracks" class="tracks"></div>
-    <div class="rowkey">
-      <span>sequence</span><span>predicted</span><span>true</span><span>&nbsp;</span>
+    <div class="rowkey" aria-hidden="true">
+      <span>seq</span><span>pred</span><span>true</span>
     </div>
+    <div id="tracks" class="tracks"></div>
   </section>
 
   <div class="two-col">
-    <!-- per-protein error bars -->
-    <section class="panel">
-      <h3>This protein: error rate</h3>
-      <p class="sub">CF is wrong more often on chameleon residues than elsewhere.</p>
+    <section class="card">
+      <h3>This protein</h3>
+      <p class="sub">Error rate where the local sequence is ambiguous vs. everywhere else.</p>
       <div id="protein-bars" class="bars"></div>
     </section>
 
-    <!-- dataset-wide summary -->
-    <section class="panel">
+    <section class="card">
       <h3>All <span id="ds-n"></span> chains</h3>
-      <p class="sub">The effect holds across the whole dataset &mdash; and grows with k, because longer
-        chameleons are rarer and more genuinely ambiguous.</p>
+      <p class="sub">The gap holds dataset-wide — and widens with k, as longer chameleons grow rarer and more ambiguous.</p>
       <div id="ds-summary"></div>
     </section>
   </div>
-
-  <section class="panel about">
-    <h3>What am I looking at?</h3>
-    <p>Every protein is a chain of amino acids that folds into local shapes: <b>&alpha;-helices</b> (H,
-      stabilized by <i>local</i> hydrogen bonds), <b>&beta;-strands</b> (E, stabilized <i>non-locally</i>
-      by distant partner strands), <b>turns</b> (T) and <b>coil</b> (C). Chou-Fasman reads only a short
-      local window, so it can see what holds a helix together but is partly blind to what holds a sheet.
-      A <b>chameleon</b> is a k-mer whose identical sequence appears as majority-helix in one chain and
-      majority-strand in another &mdash; the local sequence genuinely cannot decide, so no purely local
-      method can get both right (Kabsch &amp; Sander, 1984). Hover any residue to see the algorithm&rsquo;s
-      propensities and its call.</p>
-  </section>
 </main>
+
+<!-- ░░ chameleon popover (the reveal) ░░ -->
+<div id="info-pop" class="popover" hidden role="dialog" aria-label="What is a chameleon?">
+  <button class="pop-close" id="pop-close" aria-label="Close">×</button>
+  <h4>The chameleon</h4>
+  <p>A protein folds into local shapes: <b class="c-h">α-helix</b> (H, held together by
+    <i>local</i> hydrogen bonds), <b class="c-e">β-strand</b> (E, held <i>non-locally</i> by distant
+    partner strands), <b class="c-t">turn</b> (T) and <b>coil</b> (C).</p>
+  <p>Chou-Fasman reads only a short <i>local</i> window — so it can see what stabilizes a helix but is
+    partly blind to what stabilizes a sheet.</p>
+  <p>A <b class="c-alarm">chameleon</b> is a k-mer whose identical sequence appears majority-helix in one
+    protein and majority-strand in another. The local sequence genuinely cannot decide — so no purely
+    local method can get both right <span class="cite">(Kabsch &amp; Sander, 1984)</span>.</p>
+  <p class="pop-foot">Hover any residue to see the algorithm's propensities and its call.</p>
+</div>
+<div id="pop-scrim" class="pop-scrim" hidden></div>
+
+<!-- ░░ custom-sequence sandbox ░░ -->
+<div id="seq-modal" class="modal" hidden role="dialog" aria-label="Analyze your own sequence">
+  <div class="modal-card">
+    <button class="pop-close" id="seq-close" aria-label="Close">×</button>
+    <h4>Analyze your own sequence</h4>
+    <p class="modal-sub">Paste a protein sequence (1-letter amino acids; FASTA header lines are ignored).
+      Chou-Fasman runs live in your browser, and k-mers that fold <i>both</i> ways elsewhere in the PDB
+      are flagged. A pasted sequence has no solved structure, so there's no truth track and no accuracy —
+      this is a <b>sandbox</b>: it shows the prediction and where the prediction is least trustworthy.</p>
+    <textarea id="seq-input" spellcheck="false" placeholder="Paste amino acids (e.g. MKTAYIAKQR…), or click “try a sample”."></textarea>
+    <div class="modal-foot">
+      <div id="seq-warn" class="seq-warn"></div>
+      <div class="modal-actions">
+        <button id="seq-sample" class="ghost-btn" type="button">try a sample</button>
+        <button id="seq-go" class="primary-btn" type="button">Analyze &rarr;</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="seq-scrim" class="pop-scrim" hidden></div>
 
 <div id="tooltip" class="tooltip" hidden></div>
 

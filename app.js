@@ -3,152 +3,268 @@
  * data.js supplies sequences, deposited truth, per-residue chameleon flags, accuracy. */
 (function () {
   "use strict";
-  const DATA = PROTEIN_DATA;
-  const CF = ChouFasman;
+  const DATA = PROTEIN_DATA, CF = ChouFasman;
   const byId = {};
   DATA.proteins.forEach(p => (byId[p.id] = p));
-
   const el = s => document.querySelector(s);
-  const state = { protein: null, k: 6, reveal: true, cols: 50 };
-  let cur = null; // {p, pred4, pred3, cham}
+  const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const STATE_CLASS = { H: "h", E: "e", T: "t", C: "c" };
-  const STATE_NAME = { H: "helix", E: "strand", T: "turn", C: "coil" };
+  const state = { protein: null, k: 6, reveal: true, cols: 50, first: true };
+  let cur = null;
+  const lastNum = {};
 
-  /* ---------- selection & search ---------- */
-  function populateSelect(filter) {
-    const sel = el("#protein");
+  // chameleon k-mer sets (shipped in data.js) so we can flag a pasted sequence
+  const chamSets = {};
+  [5, 6, 7].forEach(k => (chamSets[k] = new Set((DATA.meta.chameleon_kmers || {})[String(k)] || [])));
+  function computeCham(seq, k) {
+    const set = chamSets[k], n = seq.length, f = new Array(n).fill(false);
+    for (let i = 0; i <= n - k; i++)
+      if (set.has(seq.slice(i, i + k))) for (let j = i; j < i + k; j++) f[j] = true;
+    let s = ""; for (let i = 0; i < n; i++) s += f[i] ? "1" : "0"; return s;
+  }
+  const VALID_AA = "ACDEFGHIKLMNPQRSTVWY";
+  // sperm-whale myoglobin — recognizable, and overlaps the k=5 chameleon catalog
+  const SAMPLE = "GLSDGEWQLVLNVWGKVEADIPGHGQEVLIRLFKGHPETLEKFDKFKHLKSEAEMKASEDLKKHGVTVLTALGGILKKKGHHEAELKPLAQSHATKHKIPIKYLEFISEAIIHVLHSRHPGDFGADAQGAMNKALELFRKDIAAKYKELGYQG";
+  function cleanSequence(raw) {
+    const body = raw.split(/\r?\n/).filter(l => !l.trim().startsWith(">")).join("");
+    const upper = body.toUpperCase().replace(/[^A-Z]/g, "");
+    let seq = "", dropped = 0;
+    for (const ch of upper) { if (VALID_AA.includes(ch)) seq += ch; else dropped++; }
+    let note = "";
+    if (dropped) note = `ignored ${dropped} non-standard character${dropped === 1 ? "" : "s"}. `;
+    if (seq.length > 2000) { seq = seq.slice(0, 2000); note += "truncated to 2000 residues."; }
+    return { seq, note };
+  } // for count-up
+
+  const SCLASS = { H: "h", E: "e", T: "t", C: "c" };
+  const SNAME = { H: "helix", E: "strand", T: "turn", C: "coil" };
+
+  /* ---------- combobox ---------- */
+  const listEl = () => el("#protein-list");
+  let activeIdx = -1, shown = [];
+
+  function openList(filter) {
     const q = (filter || "").trim().toUpperCase();
-    const matches = DATA.proteins.filter(p =>
-      !q || p.id.includes(q) || p.name.toUpperCase().includes(q));
-    const shown = matches.slice(0, 500);
-    sel.innerHTML = shown.map(p =>
-      `<option value="${p.id}">${p.id} — ${escapeHtml(trim(p.name, 46))}</option>`).join("");
-    if (matches.length > shown.length) {
-      sel.innerHTML += `<option disabled>…${matches.length - shown.length} more, keep typing</option>`;
+    shown = DATA.proteins
+      .filter(p => !q || p.id.includes(q) || p.name.toUpperCase().includes(q))
+      .slice(0, 200);
+    const L = listEl();
+    if (!shown.length) {
+      L.innerHTML = `<div class="none">no chains match “${escapeHtml(filter)}”</div>`;
+    } else {
+      L.innerHTML = shown.map((p, i) =>
+        `<div class="opt${state.protein && p.id === state.protein.id ? " sel" : ""}" data-id="${p.id}" data-i="${i}" role="option">
+           <span class="oid">${p.id}</span><span class="oname">${escapeHtml(p.name)}</span></div>`).join("");
     }
-    if (state.protein && shown.some(p => p.id === state.protein.id)) sel.value = state.protein.id;
+    L.hidden = false;
+    requestAnimationFrame(() => L.classList.add("open"));
+    el("#search").setAttribute("aria-expanded", "true");
+    activeIdx = -1;
+  }
+  function closeList() {
+    const L = listEl();
+    L.classList.remove("open");
+    el("#search").setAttribute("aria-expanded", "false");
+    setTimeout(() => { if (!L.classList.contains("open")) L.hidden = true; }, 200);
+  }
+  function pick(id) {
+    const p = byId[id];
+    if (!p) return;
+    state.protein = p;
+    el("#search").value = "";
+    el("#search").blur();
+    closeList();
+    render();
   }
 
+  /* ---------- default protein ---------- */
   function chooseDefault() {
-    // an illustrative default: modest length & accuracy, with visible chameleon bands
+    // pick the most compelling+representative demo: decent baseline accuracy, a fair
+    // number of chameleon residues, and the largest inside-vs-outside error gap.
+    let best = null, bestGap = -1;
     for (const p of DATA.proteins) {
-      const chamCount = countOnes(p.cham6);
-      if (p.sequence.length <= 220 && p.accuracy >= 0.35 && p.accuracy <= 0.65 && chamCount >= 8)
-        return p;
+      if (p.sequence.length < 90 || p.sequence.length > 210) continue;
+      if (p.accuracy < 0.45 || p.accuracy > 0.64) continue;
+      if (countOnes(p.cham6) < 12) continue;
+      const pred3 = CF.predict3(p.sequence), cham = p.cham6;
+      let inN = 0, inE = 0, outN = 0, outE = 0;
+      for (let i = 0; i < p.sequence.length; i++) {
+        const w = pred3[i] !== p.true_sse[i];
+        if (cham[i] === "1") { inN++; if (w) inE++; } else { outN++; if (w) outE++; }
+      }
+      if (inN < 12 || outN < 20) continue;
+      const gap = inE / inN - outE / outN;
+      if (gap > bestGap) { bestGap = gap; best = p; }
     }
-    return DATA.proteins[0];
+    return best || DATA.proteins[0];
   }
 
-  /* ---------- core render ---------- */
+  /* ---------- render ---------- */
   function render() {
     const p = state.protein;
     const pred4 = CF.predict(p.sequence);
     const pred3 = pred4.replace(/T/g, "C");
-    const cham = p["cham" + state.k];
+    const cham = p.custom ? computeCham(p.sequence, state.k) : p["cham" + state.k];
     cur = { p, pred4, pred3, cham };
-
     renderTitle(p);
     renderStatbar(p, pred3, cham);
     renderTracks(p, pred4, pred3, cham);
     renderProteinBars(p, pred3, cham);
+    // the truth toggle is meaningless without a truth track
+    const rev = el("#reveal");
+    rev.style.opacity = p.custom ? .4 : 1;
+    rev.style.pointerEvents = p.custom ? "none" : "auto";
+    state.first = false;
   }
 
   function renderTitle(p) {
-    el("#protein-title").innerHTML =
-      `${p.id} &nbsp;<small>${escapeHtml(p.name)} · ${p.sequence.length} residues</small>`;
+    const badge = p.custom ? ' <span class="sandbox-badge">sandbox · no truth</span>' : "";
+    const nm = p.custom ? "Pasted sequence" : escapeHtml(p.name);
+    el("#protein-title").innerHTML = `${p.id} &nbsp;<small>${nm} · ${p.sequence.length} aa</small>${badge}`;
   }
 
-  function renderStatbar(p, pred3, cham) {
-    const n = p.sequence.length;
+  function tally(p, pred3, cham) {
+    const n = p.sequence.length, hasTruth = p.true_sse != null;
     let correct = 0, inN = 0, inErr = 0, outN = 0, outErr = 0;
     for (let i = 0; i < n; i++) {
-      const wrong = pred3[i] !== p.true_sse[i];
-      if (!wrong) correct++;
+      const wrong = hasTruth && pred3[i] !== p.true_sse[i];
+      if (hasTruth && !wrong) correct++;
       if (cham[i] === "1") { inN++; if (wrong) inErr++; }
       else { outN++; if (wrong) outErr++; }
     }
-    const pct = x => (x * 100).toFixed(1) + "%";
-    const inRate = inN ? pct(inErr / inN) : "—";
-    const outRate = outN ? pct(outErr / outN) : "—";
-    el("#statbar").innerHTML = `
-      ${stat(pct(correct / n), "prediction accuracy (3-state)")}
-      ${stat(`${inN} <small>(${(inN / n * 100).toFixed(0)}%)</small>`,
-             `residues inside a k=${state.k} chameleon`)}
-      ${stat(inRate, "error rate INSIDE chameleons", true)}
-      ${stat(outRate, "error rate OUTSIDE chameleons")}`;
+    return { n, hasTruth, acc: hasTruth ? correct / n : null, inN,
+             inRate: hasTruth && inN ? inErr / inN : null,
+             outN, outRate: hasTruth && outN ? outErr / outN : null };
   }
-  const stat = (num, lbl, alarm) =>
-    `<div class="stat${alarm ? " alarm" : ""}"><div class="num">${num}</div><div class="lbl">${lbl}</div></div>`;
+
+  function renderStatbar(p, pred3, cham) {
+    const t = tally(p, pred3, cham);
+    let cards;
+    if (t.hasTruth) {
+      cards = [
+        { key: "acc", val: t.acc * 100, fmt: v => v.toFixed(1) + "%", sub: "", lbl: "prediction accuracy", cls: "" },
+        { key: "cnt", val: t.inN, fmt: v => Math.round(v), sub: ` <small>${(t.inN / t.n * 100).toFixed(0)}% of chain</small>`,
+          lbl: `residues in a k=${state.k} chameleon`, cls: "accent" },
+        { key: "ein", val: t.inRate == null ? null : t.inRate * 100, fmt: v => v.toFixed(1) + "%",
+          sub: "", lbl: "error INSIDE chameleons", cls: "alarm" },
+        { key: "eout", val: t.outRate == null ? null : t.outRate * 100, fmt: v => v.toFixed(1) + "%",
+          sub: "", lbl: "error OUTSIDE chameleons", cls: "" },
+      ];
+    } else {
+      const cnt = s => { let c = 0; for (const x of pred3) if (x === s) c++; return c; };
+      cards = [
+        { key: "len", val: t.n, fmt: v => Math.round(v), sub: "", lbl: "residues pasted", cls: "" },
+        { key: "ph", val: cnt("H") / t.n * 100, fmt: v => v.toFixed(0) + "%", sub: "", lbl: "predicted helix", cls: "" },
+        { key: "pe", val: cnt("E") / t.n * 100, fmt: v => v.toFixed(0) + "%", sub: "", lbl: "predicted strand", cls: "" },
+        { key: "cnt", val: t.inN, fmt: v => Math.round(v), sub: ` <small>${(t.inN / t.n * 100).toFixed(0)}%</small>`,
+          lbl: `in a known k=${state.k} chameleon`, cls: "alarm" },
+      ];
+    }
+    const bar = el("#statbar");
+    if (!bar.children.length) {
+      bar.innerHTML = cards.map((c, i) =>
+        `<div class="stat" style="--i:${i}"><div class="num"><span class="num-val"></span><span class="num-sub"></span></div>
+         <div class="lbl"></div></div>`).join("");
+      if (!REDUCE) [...bar.children].forEach(x => x.classList.add("in"));
+    }
+    cards.forEach((c, i) => {
+      const card = bar.children[i];
+      card.classList.remove("alarm", "accent");
+      if (c.cls) card.classList.add(c.cls);
+      card.querySelector(".lbl").innerHTML = c.lbl;
+      const numEl = card.querySelector(".num-val"), subEl = card.querySelector(".num-sub");
+      subEl.innerHTML = c.val == null ? "" : c.sub;
+      if (c.val == null) { numEl.textContent = "—"; lastNum[c.key] = null; return; }
+      countUp(numEl, lastNum[c.key], c.val, c.fmt);
+      lastNum[c.key] = c.val;
+    });
+  }
+
+  function countUp(node, from, to, fmt) {
+    if (REDUCE || from == null || from === to) { node.textContent = fmt(to); return; }
+    const dur = 600, t0 = performance.now();
+    function step(now) {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      node.textContent = fmt(from + (to - from) * e);
+      if (k < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
 
   function renderTracks(p, pred4, pred3, cham) {
-    const n = p.sequence.length, cols = state.cols, blocks = [];
+    const n = p.sequence.length, cols = state.cols, blocks = [], hasTruth = p.true_sse != null;
     for (let s = 0; s < n; s += cols) {
       let html = '<div class="block">';
       for (let i = s; i < Math.min(s + cols, n); i++) {
-        const a = p.sequence[i], pr = pred4[i], tr = p.true_sse[i];
-        const mm = pred3[i] !== tr;
-        html += `<div class="col" data-i="${i}">`
+        const a = p.sequence[i], pr = pred4[i], tr = hasTruth ? p.true_sse[i] : null;
+        const mm = hasTruth && pred3[i] !== tr, isC = cham[i] === "1";
+        html += `<div class="col" data-i="${i}" style="--col:${i}">`
           + `<div class="cell seq">${a}</div>`
-          + `<div class="cell ${STATE_CLASS[pr]}">${pr}</div>`
-          + `<div class="cell true ${STATE_CLASS[tr]}">${tr}</div>`
+          + `<div class="cell ${SCLASS[pr]}">${pr}</div>`
+          + (hasTruth ? `<div class="cell true ${SCLASS[tr]}">${tr}</div>` : `<div class="cell true unk"></div>`)
           + `<div class="cell mm${mm ? " on" : ""}"></div>`
-          + `<div class="band${cham[i] === "1" ? " on" : ""}"></div>`
+          + `<div class="band${isC ? " on" + (state.first && !REDUCE ? " draw" : "") : ""}"></div>`
           + `</div>`;
       }
-      html += "</div>";
-      blocks.push(html);
+      blocks.push(html + "</div>");
     }
-    const tracks = el("#tracks");
-    tracks.className = "tracks" + (state.reveal ? "" : " truthhidden");
-    tracks.innerHTML = blocks.join("");
+    const tr = el("#tracks");
+    tr.className = "tracks" + (state.reveal ? "" : " truthhidden") + (state.first && !REDUCE ? " cascade" : "");
+    tr.innerHTML = blocks.join("");
   }
 
   function renderProteinBars(p, pred3, cham) {
-    const n = p.sequence.length;
-    let inN = 0, inErr = 0, outN = 0, outErr = 0;
-    for (let i = 0; i < n; i++) {
-      const wrong = pred3[i] !== p.true_sse[i];
-      if (cham[i] === "1") { inN++; if (wrong) inErr++; } else { outN++; if (wrong) outErr++; }
+    const t = tally(p, pred3, cham);
+    if (!t.hasTruth) {
+      const note = t.inN > 0
+        ? `A pasted sequence has no solved structure, so there's nothing to score against — no accuracy,
+           no error rates. The <b>red band</b> in the tracks marks the <b>${t.inN}</b>
+           residue${t.inN === 1 ? "" : "s"} whose k-mer folds <i>both</i> ways elsewhere in the PDB:
+           exactly where a purely local method like Chou-Fasman is least able to be right.`
+        : `A pasted sequence has no solved structure, so there's no accuracy here. No <b>k=${state.k}</b>
+           chameleons were found in it — the k=6 and k=7 catalogs are small and specific to our
+           2,001-chain dataset, so novel sequences rarely hit them. Switch to <b>k=5</b> (7,304 motifs)
+           to see where this sequence overlaps known chameleons.`;
+      el("#protein-bars").innerHTML = `<div class="sandbox-note">${note}</div>`;
+      return;
     }
-    const inRate = inN ? inErr / inN : 0, outRate = outN ? outErr / outN : 0;
     el("#protein-bars").innerHTML =
-      barRow("inside chameleon", inRate, inN, "inside") +
-      barRow("outside", outRate, outN, "outside");
+      barRow("inside chameleon", t.inRate, t.inN, "inside") +
+      barRow("outside", t.outRate, t.outN, "outside");
+    // animate widths after paint
+    requestAnimationFrame(() => el("#protein-bars").querySelectorAll(".bar-fill")
+      .forEach(f => (f.style.width = f.dataset.w + "%")));
   }
   function barRow(cap, rate, count, cls) {
-    const w = (rate * 100).toFixed(0);
-    const val = count ? (rate * 100).toFixed(0) + "%" : "n/a";
+    const w = rate == null ? 0 : (rate * 100).toFixed(0);
+    const val = rate == null ? "n/a" : (rate * 100).toFixed(0) + "%";
     return `<div class="bar-row"><div class="cap">${cap}<br><small>${count} res</small></div>
-      <div class="bar-track"><div class="bar-fill ${cls}" style="width:${count ? w : 0}%"></div></div>
+      <div class="bar-track"><div class="bar-fill ${cls}" data-w="${w}"></div></div>
       <div class="val">${val}</div></div>`;
   }
 
-  /* ---------- dataset-wide summary (static) ---------- */
-  function renderDatasetSummary() {
+  /* ---------- dataset summary (static) ---------- */
+  function renderDataset() {
     const m = DATA.meta;
     el("#ds-n").textContent = m.n_chains.toLocaleString();
     const tiles = [5, 6, 7].map(k => {
       const s = m.k_sweep[String(k)];
       const inW = (s.inside * 100).toFixed(0), outW = (s.outside * 100).toFixed(0);
-      const primary = k === m.k_primary ? " primary" : "";
-      return `<div class="ktile${primary}">
-        <div class="khead"><b>k = ${k}${k === m.k_primary ? " (primary)" : ""}</b>
-          <span class="p">${s.residues_inside.toLocaleString()} chameleon residues · p = ${fmtP(s.p_value)}</span></div>
-        <div class="ksplit">
-          <div class="in" style="flex:${s.inside}">${inW}%</div>
-          <div class="out" style="flex:${s.outside}">${outW}%</div>
-        </div>
-        <div class="sub" style="margin:.5em 0 0">inside <b style="color:var(--alarm)">${inW}%</b>
-          vs outside <b style="color:var(--e)">${outW}%</b> error &nbsp;(+${((s.inside - s.outside) * 100).toFixed(1)}pp)</div>
+      const prim = k === m.k_primary;
+      return `<div class="ktile${prim ? " primary" : ""}">
+        <div class="khead"><b>k = ${k}${prim ? " · primary" : ""}</b>
+          <span class="p">${s.residues_inside.toLocaleString()} residues · p ${fmtP(s.p_value)}</span></div>
+        <div class="ksplit"><div class="in" style="flex:${s.inside}">${inW}%</div>
+          <div class="out" style="flex:${s.outside}">${outW}%</div></div>
+        <div class="gap">inside <b>${inW}%</b> vs outside ${outW}% &nbsp;(+${((s.inside - s.outside) * 100).toFixed(1)}pp error)</div>
       </div>`;
     }).join("");
     el("#ds-summary").innerHTML = `
       <div class="ds-head">
         <div><div class="num">${(m.overall_accuracy * 100).toFixed(1)}%</div><div class="lbl">overall CF accuracy</div></div>
         <div><div class="num">${m.n_residues.toLocaleString()}</div><div class="lbl">residues scored</div></div>
-      </div>
-      <div class="ksweep">${tiles}</div>`;
+      </div><div class="ksweep">${tiles}</div>`;
   }
 
   /* ---------- tooltip ---------- */
@@ -156,57 +272,126 @@
     const tip = el("#tooltip"), tracks = el("#tracks");
     tracks.addEventListener("mousemove", e => {
       const col = e.target.closest(".col");
-      if (!col) { tip.hidden = true; return; }
+      if (!col) { tip.classList.remove("show"); tip.hidden = true; return; }
       const i = +col.dataset.i, p = cur.p;
-      const aa = p.sequence[i], pr = pred4At(i), tr = p.true_sse[i];
-      const row = CF.PROP[aa] || [1, 1, 1];
-      const isCham = cur.cham[i] === "1";
-      const mism = cur.pred3[i] !== tr;
+      const aa = p.sequence[i], pr = cur.pred4[i], tr = p.true_sse[i];
+      const row = CF.PROP[aa] || [1, 1];
+      const mism = cur.pred3[i] !== tr, isC = cur.cham[i] === "1";
       tip.innerHTML =
-        `<b>${aa}${i + 1}</b> &middot; ${aaName(aa)}<hr>` +
-        `<div class="trow">predicted <span class="tag ${STATE_CLASS[pr]}">${pr} ${STATE_NAME[pr]}</span></div>` +
-        `<div class="trow">true <span class="tag ${STATE_CLASS[tr]}">${tr} ${STATE_NAME[tr]}</span></div>` +
-        `<div class="trow" style="margin-top:3px">${mism ? '<span class="cham">✗ mismatch</span>' : '✓ match'}` +
-          `${isCham ? ' <span class="cham">· chameleon</span>' : ""}</div><hr>` +
-        `<div class="trow">P&alpha; (helix) <b>${row[0].toFixed(2)}</b></div>` +
-        `<div class="trow">P&beta; (strand) <b>${row[1].toFixed(2)}</b></div>`;
-      tip.hidden = false;
-      const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+        `<div class="thead">${aa}${i + 1}</div><div class="tsub">${aaName(aa)}</div>` +
+        `<div class="trow"><span>predicted</span><span class="tag ${SCLASS[pr]}">${pr} ${SNAME[pr]}</span></div>` +
+        `<div class="trow"><span>true</span><span class="tag ${SCLASS[tr]}">${tr} ${SNAME[tr]}</span></div>` +
+        `<div class="trow"><span>${mism ? '<span class="cham">✗ mismatch</span>' : "✓ match"}</span>` +
+          `<span>${isC ? '<span class="cham">chameleon</span>' : ""}</span></div><hr>` +
+        `<div class="trow"><span>Pα helix</span><span>${row[0].toFixed(2)}</span></div>` +
+        `<div class="trow"><span>Pβ strand</span><span>${row[1].toFixed(2)}</span></div>`;
+      tip.hidden = false; tip.classList.add("show");
+      const pad = 15, w = tip.offsetWidth, h = tip.offsetHeight;
       let x = e.clientX + pad, y = e.clientY + pad;
       if (x + w > innerWidth) x = e.clientX - w - pad;
       if (y + h > innerHeight) y = e.clientY - h - pad;
       tip.style.left = x + "px"; tip.style.top = y + "px";
     });
-    tracks.addEventListener("mouseleave", () => (tip.hidden = true));
+    tracks.addEventListener("mouseleave", () => { tip.classList.remove("show"); tip.hidden = true; });
   }
-  const pred4At = i => cur.pred4[i];
+
+  /* ---------- popover ---------- */
+  function togglePop(show) {
+    el("#info-pop").hidden = !show;
+    el("#pop-scrim").hidden = !show;
+  }
+
+  /* ---------- custom-sequence sandbox ---------- */
+  function openSeq() {
+    el("#seq-modal").hidden = false;
+    el("#seq-scrim").hidden = false;
+    setTimeout(() => el("#seq-input").focus(), 30);
+  }
+  function closeSeq() {
+    el("#seq-modal").hidden = true;
+    el("#seq-scrim").hidden = true;
+  }
+  function analyzeCustom() {
+    const { seq, note } = cleanSequence(el("#seq-input").value);
+    const warn = el("#seq-warn");
+    if (seq.length < 7) {
+      warn.className = "seq-warn err";
+      warn.textContent = seq.length ? "Need at least 7 residues to run k-mer analysis." : "Paste a sequence first.";
+      return;
+    }
+    state.protein = { id: "CUSTOM", name: "Pasted sequence", sequence: seq, true_sse: null, custom: true };
+    state.first = true;              // let the flourishes play for the new sequence
+    closeSeq();
+    computeCols();
+    render();
+    window.scrollTo({ top: 0, behavior: REDUCE ? "auto" : "smooth" });
+  }
 
   /* ---------- events ---------- */
   function init() {
     state.protein = chooseDefault();
     computeCols();
-    populateSelect("");
-    renderDatasetSummary();
+    renderDataset();
     render();
     initTooltip();
+    // sync pill to default k
+    positionPill();
 
-    el("#search").addEventListener("input", e => populateSelect(e.target.value));
-    el("#protein").addEventListener("change", e => {
-      const p = byId[e.target.value];
-      if (p) { state.protein = p; render(); }
+    const search = el("#search");
+    search.addEventListener("focus", () => openList(search.value));
+    search.addEventListener("input", () => openList(search.value));
+    search.addEventListener("blur", () => setTimeout(closeList, 120));
+    search.addEventListener("keydown", e => {
+      const opts = [...listEl().querySelectorAll(".opt")];
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault(); if (!opts.length) return;
+        activeIdx = (activeIdx + (e.key === "ArrowDown" ? 1 : -1) + opts.length) % opts.length;
+        opts.forEach((o, i) => o.classList.toggle("active", i === activeIdx));
+        opts[activeIdx].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter" && activeIdx >= 0) {
+        pick(opts[activeIdx].dataset.id);
+      } else if (e.key === "Escape") { search.blur(); closeList(); }
     });
-    el("#kbtns").addEventListener("click", e => {
+    listEl().addEventListener("mousedown", e => {
+      const o = e.target.closest(".opt"); if (o) { e.preventDefault(); pick(o.dataset.id); }
+    });
+
+    el("#kmer").addEventListener("click", e => {
       const b = e.target.closest("button"); if (!b) return;
       state.k = +b.dataset.k;
-      [...el("#kbtns").children].forEach(x => x.classList.toggle("active", x === b));
+      [...el("#kmer").querySelectorAll("button")].forEach(x =>
+        x.setAttribute("aria-selected", x === b ? "true" : "false"));
+      positionPill();
       render();
     });
+
     el("#reveal").addEventListener("click", e => {
       state.reveal = !state.reveal;
-      e.target.setAttribute("aria-pressed", String(state.reveal));
-      e.target.innerHTML = state.reveal ? "Shown — click to hide" : "Hidden — click to reveal";
-      el("#tracks").className = "tracks" + (state.reveal ? "" : " truthhidden");
+      e.currentTarget.setAttribute("aria-pressed", String(state.reveal));
+      el("#tracks").classList.toggle("truthhidden", !state.reveal);
     });
+
+    el("#info").addEventListener("click", () => togglePop(true));
+    el("#pop-close").addEventListener("click", () => togglePop(false));
+    el("#pop-scrim").addEventListener("click", () => togglePop(false));
+
+    el("#custom-btn").addEventListener("click", openSeq);
+    el("#seq-close").addEventListener("click", closeSeq);
+    el("#seq-scrim").addEventListener("click", closeSeq);
+    el("#seq-go").addEventListener("click", analyzeCustom);
+    el("#seq-sample").addEventListener("click", () => {
+      el("#seq-input").value = SAMPLE;
+      el("#seq-warn").textContent = "";
+    });
+    el("#seq-input").addEventListener("input", () => {
+      const { note } = cleanSequence(el("#seq-input").value);
+      const w = el("#seq-warn"); w.className = "seq-warn"; w.textContent = note;
+    });
+
+    addEventListener("keydown", e => { if (e.key === "Escape") { togglePop(false); closeSeq(); } });
+
+    addEventListener("scroll", () => el("#appbar").classList.toggle("scrolled", scrollY > 4), { passive: true });
+
     let t;
     addEventListener("resize", () => { clearTimeout(t); t = setTimeout(() => {
       const before = state.cols; computeCols();
@@ -214,6 +399,10 @@
     }, 150); });
   }
 
+  function positionPill() {
+    const kmer = el("#kmer");
+    kmer.style.setProperty("--active", { 5: 0, 6: 1, 7: 2 }[state.k]);
+  }
   function computeCols() {
     const w = el("#tracks").clientWidth || 900;
     state.cols = Math.max(30, Math.min(80, Math.floor(w / 15)));
@@ -221,14 +410,13 @@
 
   /* ---------- helpers ---------- */
   function countOnes(s) { let c = 0; for (let i = 0; i < s.length; i++) if (s[i] === "1") c++; return c; }
-  function trim(s, n) { return s.length > n ? s.slice(0, n - 1) + "…" : s; }
-  function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
   function fmtP(p) { return p < 1e-4 ? p.toExponential(1) : p.toFixed(4); }
-  const AANAMES = { A: "Alanine", R: "Arginine", N: "Asparagine", D: "Aspartate", C: "Cysteine",
+  const AAN = { A: "Alanine", R: "Arginine", N: "Asparagine", D: "Aspartate", C: "Cysteine",
     E: "Glutamate", Q: "Glutamine", G: "Glycine", H: "Histidine", I: "Isoleucine", L: "Leucine",
     K: "Lysine", M: "Methionine", F: "Phenylalanine", P: "Proline", S: "Serine", T: "Threonine",
     W: "Tryptophan", Y: "Tyrosine", V: "Valine" };
-  function aaName(a) { return AANAMES[a] || a; }
+  function aaName(a) { return AAN[a] || a; }
 
   document.addEventListener("DOMContentLoaded", init);
 })();
