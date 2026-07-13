@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chou-Fasman vs. Chameleon Sequences</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="titles">
+      <h1>Where Chou-Fasman fails, and why it isn&rsquo;t its fault</h1>
+      <p class="thesis">A 1974 sequence&rarr;structure predictor makes most of its mistakes on
+        <b>chameleons</b> &mdash; short sequences that fold as a helix in one protein and a strand
+        in another. The errors below are computed live in your browser.</p>
+    </div>
+    <div class="controls">
+      <label class="control">
+        <span>Protein</span>
+        <input id="search" type="text" placeholder="search 2001 chains&hellip;" autocomplete="off">
+        <select id="protein" size="1"></select>
+      </label>
+      <label class="control">
+        <span>Chameleon k-mer length</span>
+        <div class="kbtns" id="kbtns">
+          <button data-k="5">5</button>
+          <button data-k="6" class="active">6</button>
+          <button data-k="7">7</button>
+        </div>
+      </label>
+      <label class="control reveal">
+        <span>Truth track</span>
+        <button id="reveal" class="toggle" aria-pressed="true">Shown &mdash; click to hide</button>
+      </label>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- live per-protein stat bar -->
+  <section id="statbar" class="statbar"></section>
+
+  <!-- the hero visual -->
+  <section class="hero">
+    <div class="hero-head">
+      <h2 id="protein-title">&nbsp;</h2>
+      <div class="legend" id="legend">
+        <span class="chip"><i class="sw h"></i>H &middot; helix</span>
+        <span class="chip"><i class="sw e"></i>E &middot; strand/sheet</span>
+        <span class="chip"><i class="sw t"></i>T &middot; turn</span>
+        <span class="chip"><i class="sw c"></i>C &middot; coil</span>
+        <span class="chip"><i class="sw alarm"></i>chameleon &middot; &ldquo;same sequence, two shapes&rdquo;</span>
+        <span class="chip"><i class="tick"></i>mismatch &middot; prediction &ne; truth</span>
+      </div>
+    </div>
+    <div id="tracks" class="tracks"></div>
+    <div class="rowkey">
+      <span>sequence</span><span>predicted</span><span>true</span><span>&nbsp;</span>
+    </div>
+  </section>
+
+  <div class="two-col">
+    <!-- per-protein error bars -->
+    <section class="panel">
+      <h3>This protein: error rate</h3>
+      <p class="sub">CF is wrong more often on chameleon residues than elsewhere.</p>
+      <div id="protein-bars" class="bars"></div>
+    </section>
+
+    <!-- dataset-wide summary -->
+    <section class="panel">
+      <h3>All <span id="ds-n"></span> chains</h3>
+      <p class="sub">The effect holds across the whole dataset &mdash; and grows with k, because longer
+        chameleons are rarer and more genuinely ambiguous.</p>
+      <div id="ds-summary"></div>
+    </section>
+  </div>
+
+  <section class="panel about">
+    <h3>What am I looking at?</h3>
+    <p>Every protein is a chain of amino acids that folds into local shapes: <b>&alpha;-helices</b> (H,
+      stabilized by <i>local</i> hydrogen bonds), <b>&beta;-strands</b> (E, stabilized <i>non-locally</i>
+      by distant partner strands), <b>turns</b> (T) and <b>coil</b> (C). Chou-Fasman reads only a short
+      local window, so it can see what holds a helix together but is partly blind to what holds a sheet.
+      A <b>chameleon</b> is a k-mer whose identical sequence appears as majority-helix in one chain and
+      majority-strand in another &mdash; the local sequence genuinely cannot decide, so no purely local
+      method can get both right (Kabsch &amp; Sander, 1984). Hover any residue to see the algorithm&rsquo;s
+      propensities and its call.</p>
+  </section>
+</main>
+
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script src="data.js"></script>
+<script src="chou_fasman.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
