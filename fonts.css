@@ -5,3 +5,22 @@
 @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/jetbrainsmono-600.woff2') format('woff2');}
 @font-face{font-family:'Space Grotesk';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/spacegrotesk-600.woff2') format('woff2');}
 @font-face{font-family:'Space Grotesk';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/spacegrotesk-700.woff2') format('woff2');}
+@font-face {
+    font-family: 'Neue Frutiger World'; src: url('Fonts/Frutiger-Regular.otf') format('opentype');
+    font-weight: 400;
+}
+
+@font-face {
+    font-family: 'Neue Frutiger World'; src: url('Fonts/Frutiger-Medium.otf') format('opentype');
+    font-weight: 500;
+}
+
+@font-face {
+    font-family: 'Neue Frutiger World'; src: url('Fonts/Frutiger-Heavy.otf') format('opentype');
+    font-weight: 700;
+}
+
+@font-face {
+    font-family: 'Neue Frutiger World'; src: url('Fonts/Frutiger-Light.otf') format('opentype');
+    font-weight: 300;
+}

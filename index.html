@@ -32,11 +32,11 @@
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-label">solved sequence</span>
       </button>
-      <button id="import-btn" class="ghost-btn" title="Import a PDB entry from RCSB"><span>⤓</span> import PDB</button>
       <button id="confidence" class="switch plain" aria-pressed="false" title="Shade predicted cells by how close the Pα/Pβ call was">
-        <span class="switch-track"><span class="switch-knob"></span></span>
-        <span class="switch-label">confidence</span>
-      </button>
+          <span class="switch-track"><span class="switch-knob"></span></span>
+          <span class="switch-label">confidence</span>
+        </button>
+        <button id="import-btn" class="ghost-btn" title="Import a PDB entry from RCSB"><span>⤓</span> import PDB</button>
       <button id="custom-btn" class="ghost-btn" title="Analyze your own sequence"><span>＋</span> sequence</button>
     </div>
   </div>
@@ -76,7 +76,7 @@
   <!-- ░░ Feature E: 3D structure ░░ -->
   <section class="card s3d-card">
     <div class="s3d-head">
-      <div><h3>3D structure</h3><p class="sub">See where the errors land on the real fold — and how the same chameleon k-mer takes a different shape.</p></div>
+      <div><h3>3D structure</h3><p class="sub">3D structure viewer, with errors and chameleon sequences highlighted.</p></div>
       <button id="s3d-toggle" class="ghost-btn"><span>▸</span> show 3D</button>
     </div>
     <div id="s3d-body" class="s3d-body" hidden>

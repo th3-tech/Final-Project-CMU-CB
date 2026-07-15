@@ -25,37 +25,11 @@
     --mono:'JetBrains Mono','SFMono-Regular',Consolas,monospace;
 }
 
-@font-face {
-    font-family: 'Neue Frutiger World';
-    src: url('Fonts/Frutiger-Regular.otf') format('opentype');
-    font-weight: 400;
-    
-}
-
-@font-face {
-    font-family: 'Neue Frutiger World';
-    src: url('Fonts/Frutiger-Medium.otf') format('opentype');
-    font-weight: 500;
-}
-
-@font-face {
-    font-family: 'Neue Frutiger World';
-    src: url('Fonts/Frutiger-Heavy.otf') format('opentype');
-    font-weight: 700;
-}
-
-@font-face {
-    font-family: 'Neue Frutiger World';
-    src: url('Fonts/Frutiger-Light.otf') format('opentype');
-    font-weight: 300;
-}
-
 h1.hero-title {
     font-family: var(--sans);
     font-weight: 700;
     font-size: 2.5em;
 }
-
 
 *{box-sizing:border-box}
 html,body{margin:0}
@@ -123,11 +97,11 @@ b{font-weight:600}
   background:var(--grad-contrast);transform:translateX(15px);transition:transform .24s var(--ease-spring),background .2s}
 .switch[aria-pressed="false"] .switch-track{background:#3a1d1d;border-color:var(--alarm)}
 .switch[aria-pressed="false"] .switch-knob{transform:translateX(0);background:var(--alarm)}
-.switch[aria-pressed="false"]{color:#e88;border-color:#5a2a2a}
+.switch[aria-pressed="false"]{color:var(--primary-contrast);border-color:#5a2a2a}
 /* neutral variant (confidence toggle): off = grey, on = accent (not the truth toggle's red) */
 .switch.plain[aria-pressed="false"] .switch-track{background:var(--surface-2);border-color:var(--border)}
 .switch.plain[aria-pressed="false"] .switch-knob{transform:translateX(0);background:var(--text-3)}
-.switch.plain[aria-pressed="false"]{color:var(--text-2);border-color:var(--border)}
+.switch.plain[aria-pressed="false"]{color:var(--primary-contrast);border-color:var(--border)}
 .switch.plain[aria-pressed="true"]{color:var(--accent);border-color:var(--accent)}
 .switch.plain[aria-pressed="true"] .switch-track{background:var(--accent-glow);border-color:var(--accent)}
 .switch.plain[aria-pressed="true"] .switch-knob{transform:translateX(15px);background:var(--accent)}
