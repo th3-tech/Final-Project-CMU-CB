@@ -12,10 +12,13 @@
 <!-- ░░ app bar ░░ -->
 <header class="appbar" id="appbar">
   <div class="appbar-inner">
-    <div class="wordmark"><span class="diamond"></span>Chou-Fasman</div>
+    <div class="wordmark">
+        <img class = 'gforce' src = 'https://trajcvqnpyzyffkmchkc.supabase.co/storage/v1/object/public/house-images/G/avatar?t=1781994938149'>
+        G21 Final Project
+    </div>
     <div class="appbar-controls">
       <div class="field">
-        <input id="search" type="text" placeholder="search 2,001 chains…" autocomplete="off" spellcheck="false"
+        <input id="search" type="text" placeholder="Search pre-computed chains…" autocomplete="off" spellcheck="false"
                role="combobox" aria-expanded="false" aria-controls="protein-list">
         <div id="protein-list" class="protein-list" role="listbox" hidden></div>
       </div>
@@ -27,8 +30,9 @@
       </div>
       <button id="reveal" class="switch" aria-pressed="false" title="Show/hide the true structure track">
         <span class="switch-track"><span class="switch-knob"></span></span>
-        <span class="switch-label">truth</span>
+        <span class="switch-label">solved sequence</span>
       </button>
+      <button id="import-btn" class="ghost-btn" title="Import a PDB entry from RCSB"><span>⤓</span> import PDB</button>
       <button id="confidence" class="switch plain" aria-pressed="false" title="Shade predicted cells by how close the Pα/Pβ call was">
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-label">confidence</span>
@@ -41,9 +45,9 @@
 <main>
   <!-- ░░ compact hero ░░ -->
   <section class="hero-band">
-    <p class="eyebrow">Secondary-structure predictor · 1974</p>
+    <p class="eyebrow">Investigating Error in Secondary Structure Prediction Associated with Chameleon Sequences</p>
     <h1 class="hero-title">
-      Where Chou-Fasman fails
+      Chou-Fasman Error Sandbox
       <button id="info" class="info-btn" aria-label="What is a chameleon?">i</button>
     </h1>
   </section>
@@ -59,8 +63,8 @@
         <span class="chip"><i class="sw h"></i>H</span>
         <span class="chip"><i class="sw e"></i>E</span>
         <span class="chip"><i class="sw c"></i>C</span>
-        <span class="chip"><i class="sw alarm"></i>chameleon</span>
         <span class="chip"><i class="tick"></i>mismatch</span>
+        <span class="chip"><i class="sw alarm"></i>chameleon</span>
       </div>
     </div>
     <div class="rowkey" aria-hidden="true">
@@ -94,8 +98,8 @@
     </section>
 
     <section class="card">
-      <h3>All <span id="ds-n"></span> chains</h3>
-      <p class="sub">The gap holds dataset-wide — and widens with k, as longer chameleons grow rarer and more ambiguous.</p>
+      <h3>Analysis of all <span id="ds-n"></span> proteins</h3>
+      <p class="sub">The gap between  and widens with k, as longer chameleons grow rarer and more ambiguous.</p>
       <div id="ds-summary"></div>
     </section>
   </div>
@@ -145,6 +149,21 @@
     </div>
   </div>
 </div>
+<div id="pdb-modal" class="modal" hidden role="dialog" aria-label="Import a PDB code">
+  <div class="modal-card">
+    <button class="pop-close" id="pdb-close" aria-label="Close">×</button>
+    <h4>Import a PDB entry</h4>
+    <p class="modal-sub">Enter a PDB code to fetch the first polymer sequence from RCSB.<br>Only the sequence is analyzed; no experimental structure is shown.</p>
+    <input id="pdb-input" type="text" maxlength="4" placeholder="Enter PDB code (e.g. 1TUP)" autocomplete="off">
+    <div class="modal-foot">
+      <div id="pdb-warn" class="seq-warn"></div>
+      <div class="modal-actions">
+        <button id="pdb-go" class="primary-btn" type="button">Fetch & analyze</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="pdb-scrim" class="pop-scrim" hidden></div>
 <div id="seq-scrim" class="pop-scrim" hidden></div>
 
 <!-- ░░ Feature A: chameleon spotlight ░░ -->
