@@ -7,9 +7,11 @@
   const byId = {};
   DATA.proteins.forEach(p => (byId[p.id] = p));
   const el = s => document.querySelector(s);
+  const PINNED = ["7MQ7", "6PFO", "8AX7", "8F23", "6WBJ", "1WSB", "4ANQ", "3ZYA"];  // featured chains, shown first in search
   const REDUCE = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const state = { protein: null, k: 6, reveal: true, cols: 50, first: true };
+  const state = { protein: null, k: 6, reveal: false, confidence: false, show3d: false, cols: 50, first: true };
+  const confOpacity = m => (0.35 + Math.min(Math.abs(m.pa - m.pb), 0.5) / 0.5 * 0.65).toFixed(3);
   let cur = null;
   const lastNum = {};
 
@@ -45,9 +47,15 @@
 
   function openList(filter) {
     const q = (filter || "").trim().toUpperCase();
-    shown = DATA.proteins
-      .filter(p => !q || p.id.includes(q) || p.name.toUpperCase().includes(q))
-      .slice(0, 200);
+    const matches = DATA.proteins
+      .filter(p => !q || p.id.includes(q) || p.name.toUpperCase().includes(q));
+    // always show these featured chains first, in this order (those that match the filter)
+    const pinned = [];
+    for (const id of PINNED) {
+      const idx = matches.findIndex(p => p.id === id);
+      if (idx >= 0) pinned.push(matches.splice(idx, 1)[0]);
+    }
+    shown = pinned.concat(matches).slice(0, 200);
     const L = listEl();
     if (!shown.length) {
       L.innerHTML = `<div class="none">no chains match “${escapeHtml(filter)}”</div>`;
@@ -79,8 +87,9 @@
 
   /* ---------- default protein ---------- */
   function chooseDefault() {
-    // pick the most compelling+representative demo: decent baseline accuracy, a fair
-    // number of chameleon residues, and the largest inside-vs-outside error gap.
+    if (byId["7MQ7"]) return byId["7MQ7"];   // pinned default
+    // otherwise pick the most compelling+representative demo: decent baseline accuracy, a
+    // fair number of chameleon residues, and the largest inside-vs-outside error gap.
     let best = null, bestGap = -1;
     for (const p of DATA.proteins) {
       if (p.sequence.length < 90 || p.sequence.length > 210) continue;
@@ -102,10 +111,10 @@
   /* ---------- render ---------- */
   function render() {
     const p = state.protein;
-    const pred4 = CF.predict(p.sequence);
-    const pred3 = pred4.replace(/T/g, "C");
+    const detailed = CF.predictDetailed(p.sequence);
+    const pred4 = detailed.pred, pred3 = detailed.pred;
     const cham = p.custom ? computeCham(p.sequence, state.k) : p["cham" + state.k];
-    cur = { p, pred4, pred3, cham };
+    cur = { p, pred4, pred3, cham, meta: detailed.meta };
     renderTitle(p);
     renderStatbar(p, pred3, cham);
     renderTracks(p, pred4, pred3, cham);
@@ -115,6 +124,7 @@
     rev.style.opacity = p.custom ? .4 : 1;
     rev.style.pointerEvents = p.custom ? "none" : "auto";
     state.first = false;
+    if (state.show3d) render3DMain();
   }
 
   function renderTitle(p) {
@@ -199,9 +209,10 @@
       for (let i = s; i < Math.min(s + cols, n); i++) {
         const a = p.sequence[i], pr = pred4[i], tr = hasTruth ? p.true_sse[i] : null;
         const mm = hasTruth && pred3[i] !== tr, isC = cham[i] === "1";
-        html += `<div class="col" data-i="${i}" style="--col:${i}">`
+        const predStyle = state.confidence ? ` style="opacity:${confOpacity(cur.meta[i])}"` : "";
+        html += `<div class="col${isC ? " chamcol" : ""}" data-i="${i}" style="--col:${i}">`
           + `<div class="cell seq">${a}</div>`
-          + `<div class="cell ${SCLASS[pr]}">${pr}</div>`
+          + `<div class="cell predcell ${SCLASS[pr]}"${predStyle}>${pr}</div>`
           + (hasTruth ? `<div class="cell true ${SCLASS[tr]}">${tr}</div>` : `<div class="cell true unk"></div>`)
           + `<div class="cell mm${mm ? " on" : ""}"></div>`
           + `<div class="band${isC ? " on" + (state.first && !REDUCE ? " draw" : "") : ""}"></div>`
@@ -244,6 +255,14 @@
       <div class="val">${val}</div></div>`;
   }
 
+  // Feature D: shade predicted cells by decision margin (cross-fades existing cells)
+  function applyConfidence() {
+    document.querySelectorAll("#tracks .col").forEach(colEl => {
+      const pc = colEl.querySelector(".predcell");
+      if (pc) pc.style.opacity = state.confidence ? confOpacity(cur.meta[+colEl.dataset.i]) : "";
+    });
+  }
+
   /* ---------- dataset summary (static) ---------- */
   function renderDataset() {
     const m = DATA.meta;
@@ -267,24 +286,85 @@
       </div><div class="ksweep">${tiles}</div>`;
   }
 
+  /* ---------- Feature C: aggregate scatter ---------- */
+  function renderScatter(k) {
+    const rows = (typeof AGGREGATE !== "undefined" && AGGREGATE[String(k)]) || [];
+    const summ = DATA.meta.aggregate_summary[String(k)];
+    const W = 520, H = 470, mL = 48, mR = 16, mT = 14, mB = 46;
+    const pw = W - mL - mR, ph = H - mT - mB;
+    const X = v => mL + v * pw, Y = v => mT + (1 - v) * ph;
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="per-chain error scatter">`;
+    for (const t of [0, .25, .5, .75, 1]) {
+      s += `<line class="sgrid" x1="${X(0)}" y1="${Y(t)}" x2="${X(1)}" y2="${Y(t)}"/>`
+        + `<line class="sgrid" x1="${X(t)}" y1="${Y(0)}" x2="${X(t)}" y2="${Y(1)}"/>`
+        + `<text class="stick" x="${mL - 8}" y="${Y(t) + 3}" text-anchor="end">${t * 100}</text>`
+        + `<text class="stick" x="${X(t)}" y="${Y(0) + 18}" text-anchor="middle">${t * 100}</text>`;
+    }
+    s += `<line class="sdiag" x1="${X(0)}" y1="${Y(0)}" x2="${X(1)}" y2="${Y(1)}"/>`
+      + `<text class="saxis" x="${X(.5)}" y="${H - 8}" text-anchor="middle">error outside chameleons (%)</text>`
+      + `<text class="saxis" transform="rotate(-90 13 ${mT + ph / 2})" x="13" y="${mT + ph / 2}" text-anchor="middle">error inside (%)</text>`;
+    for (const r of rows) {
+      const above = r.inside > r.outside;
+      s += `<circle class="sdot ${above ? "above" : "below"}" cx="${X(r.outside).toFixed(1)}" cy="${Y(r.inside).toFixed(1)}" r="3" data-id="${r.id}" data-in="${r.inside}" data-out="${r.outside}"/>`;
+    }
+    el("#scatter-wrap").innerHTML = s + "</svg>";
+    el("#scatter-stat").innerHTML = `<b>${(summ.pct_above_line * 100).toFixed(0)}%</b> of ${rows.length.toLocaleString()}`
+      + ` chains sit above the line · mean gap <b>+${(summ.mean_gap * 100).toFixed(0)} pts</b>`;
+  }
+
+  function initScatter() {
+    const wrap = el("#scatter-wrap"), tip = el("#scatter-tip");
+    wrap.addEventListener("mousemove", e => {
+      const dot = e.target.closest(".sdot");
+      if (!dot) { tip.classList.remove("show"); tip.hidden = true; return; }
+      tip.innerHTML = `<span class="sid">${dot.dataset.id}</span> · inside `
+        + `${(+dot.dataset.in * 100).toFixed(0)}% · outside ${(+dot.dataset.out * 100).toFixed(0)}%`;
+      tip.hidden = false; tip.classList.add("show");
+      tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 14) + "px";
+    });
+    wrap.addEventListener("mouseleave", () => { tip.classList.remove("show"); tip.hidden = true; });
+    wrap.addEventListener("click", e => { const d = e.target.closest(".sdot"); if (d) pick(d.dataset.id); });
+  }
+
   /* ---------- tooltip ---------- */
   function initTooltip() {
     const tip = el("#tooltip"), tracks = el("#tracks");
+    const chip = el("#compare-chip");
+    let lastInspI = -1;
     tracks.addEventListener("mousemove", e => {
       const col = e.target.closest(".col");
-      if (!col) { tip.classList.remove("show"); tip.hidden = true; return; }
+      if (!col) { tip.classList.remove("show"); tip.hidden = true; chip.classList.remove("show"); chip.hidden = true; return; }
       const i = +col.dataset.i, p = cur.p;
-      const aa = p.sequence[i], pr = cur.pred4[i], tr = p.true_sse[i];
-      const row = CF.PROP[aa] || [1, 1];
-      const mism = cur.pred3[i] !== tr, isC = cur.cham[i] === "1";
-      tip.innerHTML =
-        `<div class="thead">${aa}${i + 1}</div><div class="tsub">${aaName(aa)}</div>` +
-        `<div class="trow"><span>predicted</span><span class="tag ${SCLASS[pr]}">${pr} ${SNAME[pr]}</span></div>` +
-        `<div class="trow"><span>true</span><span class="tag ${SCLASS[tr]}">${tr} ${SNAME[tr]}</span></div>` +
-        `<div class="trow"><span>${mism ? '<span class="cham">✗ mismatch</span>' : "✓ match"}</span>` +
-          `<span>${isC ? '<span class="cham">chameleon</span>' : ""}</span></div><hr>` +
-        `<div class="trow"><span>Pα helix</span><span>${row[0].toFixed(2)}</span></div>` +
-        `<div class="trow"><span>Pβ strand</span><span>${row[1].toFixed(2)}</span></div>`;
+      if (cur.cham[i] === "1") {
+        chip.hidden = false; chip.classList.add("show");
+        chip.style.left = (e.clientX + 12) + "px"; chip.style.top = (e.clientY - 30) + "px";
+      } else { chip.classList.remove("show"); chip.hidden = true; }
+      const isC = cur.cham[i] === "1";
+      if (i !== lastInspI) {        // rebuild only when the residue changes (calm, no strobe)
+        lastInspI = i;
+        const aa = p.sequence[i], pr = cur.pred4[i], m = cur.meta[i];
+        const hasTruth = p.true_sse != null, tr = hasTruth ? p.true_sse[i] : null;
+        const wH = m.pa >= m.pb;
+        const wa = Math.min(100, m.pa / 2 * 100), wb = Math.min(100, m.pb / 2 * 100);
+        const diff = Math.abs(m.pa - m.pb).toFixed(2);
+        const stateChip = m.regionAccepted ? '<span class="ichip ok">region accepted</span>'
+          : m.reverted ? '<span class="ichip rev">reverted to coil</span>'
+          : '<span class="ichip dim">no nucleation</span>';
+        const verdict = hasTruth
+          ? `predicted <b class="s-${pr}">${SNAME[pr]}</b> · true <b class="s-${tr}">${SNAME[tr]}</b> `
+            + `· <span class="${pr === tr ? "ok" : "bad"}">${pr === tr ? "✓" : "✗"}</span>`
+          : `predicted <b class="s-${pr}">${SNAME[pr]}</b> · <span class="dimv">no truth</span>`;
+        tip.innerHTML =
+          `<div class="insp-head"><span class="ia">${aa}</span> · position ${i + 1}`
+            + `${isC ? ' <span class="cham">⤢ click to compare</span>' : ""}</div>`
+          + `<div class="insp-sub">${aaName(aa)}</div>`
+          + `<div class="tug">`
+            + `<div class="tug-row"><span class="tl">Pα</span><div class="tbar"><div class="tfill h${wH ? " win" : ""}" style="width:${wa}%"></div></div><span class="tv">${m.pa.toFixed(2)}</span></div>`
+            + `<div class="tug-row"><span class="tl">Pβ</span><div class="tbar"><div class="tfill e${!wH ? " win" : ""}" style="width:${wb}%"></div></div><span class="tv">${m.pb.toFixed(2)}</span></div>`
+          + `</div><div class="tug-cap">${wH ? "helix" : "strand"} favoured by ${diff}</div>`
+          + `<div class="chips"><span class="ichip${m.inNucleus ? " lit" : ""}">nucleation window</span>${stateChip}</div>`
+          + `<div class="verdict">${verdict}</div>`;
+      }
       tip.hidden = false; tip.classList.add("show");
       const pad = 15, w = tip.offsetWidth, h = tip.offsetHeight;
       let x = e.clientX + pad, y = e.clientY + pad;
@@ -292,7 +372,149 @@
       if (y + h > innerHeight) y = e.clientY - h - pad;
       tip.style.left = x + "px"; tip.style.top = y + "px";
     });
-    tracks.addEventListener("mouseleave", () => { tip.classList.remove("show"); tip.hidden = true; });
+    tracks.addEventListener("mouseleave", () => {
+      tip.classList.remove("show"); tip.hidden = true;
+      chip.classList.remove("show"); chip.hidden = true;
+      lastInspI = -1;
+    });
+    tracks.addEventListener("click", e => {
+      const col = e.target.closest(".col"); if (!col) return;
+      const i = +col.dataset.i;
+      if (state.show3d && mainViewer) Structure3D.pulse(mainViewer, i + 1);
+      if (cur.cham[i] === "1") openSpotlightAt(i);
+    });
+  }
+
+  /* ---------- Feature A: chameleon spotlight ---------- */
+  const SNAMELONG = { H: "helix", E: "strand", C: "coil" };
+  let spot = null;
+
+  function domLabel(str, pos, k) {
+    const cnt = { H: 0, E: 0, C: 0 };
+    for (let i = pos; i < pos + k && i < str.length; i++) cnt[str[i] === "H" ? "H" : str[i] === "E" ? "E" : "C"]++;
+    let best = "H";
+    for (const s of ["E", "C"]) if (cnt[s] > cnt[best]) best = s;
+    return best;
+  }
+  function strictLabel(str, pos, k) {
+    let h = 0, e = 0;
+    for (let i = pos; i < pos + k && i < str.length; i++) { if (str[i] === "H") h++; else if (str[i] === "E") e++; }
+    if (h > k / 2) return "H";
+    if (e > k / 2) return "E";
+    return "C";
+  }
+  const corePred = (occ, k) => domLabel(CF.predict(byId[occ.id].sequence), occ.pos, k);
+
+  function openSpotlightAt(i) {
+    const k = state.k, idx = (CHAMELEON_INDEX[String(k)]) || {}, seq = cur.p.sequence;
+    let kmer = null, kpos = -1;
+    for (let j = Math.max(0, i - k + 1); j <= Math.min(i, seq.length - k); j++) {
+      if (idx[seq.slice(j, j + k)]) { kmer = seq.slice(j, j + k); kpos = j; break; }
+    }
+    if (!kmer) return;
+    const entry = idx[kmer];
+    const H = entry.H.map(([id, pos]) => ({ id, pos }));
+    const E = entry.E.map(([id, pos]) => ({ id, pos }));
+    // include the clicked protein's own occurrence if it's a clean H or E stretch
+    if (!cur.p.custom) {
+      const cl = strictLabel(cur.p.true_sse, kpos, k);
+      if (cl === "H" && !H.some(o => o.id === cur.p.id && o.pos === kpos)) H.unshift({ id: cur.p.id, pos: kpos });
+      if (cl === "E" && !E.some(o => o.id === cur.p.id && o.pos === kpos)) E.unshift({ id: cur.p.id, pos: kpos });
+    }
+    if (!H.length || !E.length) return;
+    // default to a pair where CF's core guess matches (so "same guess" is literally true)
+    const pairCount = Math.max(H.length, E.length);
+    let def = 0;
+    for (let p = 0; p < pairCount; p++)
+      if (corePred(H[p % H.length], k) === corePred(E[p % E.length], k)) { def = p; break; }
+    spot = { kmer, k, H, E, pairIndex: def };
+    el("#spot-scrim").hidden = false;
+    const s = el("#spotlight"); s.hidden = false; s.classList.remove("closing");
+    renderSpotlight(true);
+  }
+
+  function renderSpotlight(firstOpen) {
+    const { kmer, k, H, E, pairIndex } = spot;
+    const hOcc = H[pairIndex % H.length], eOcc = E[pairIndex % E.length];
+    el("#spot-kmer").innerHTML = [...kmer].map(c => `<span class="ktile">${c}</span>`).join("");
+    const same = corePred(hOcc, k) === corePred(eOcc, k);
+    el("#spot-verdict").innerHTML = same
+      ? `Same sequence. Same Chou-Fasman guess (<b>${SNAMELONG[corePred(hOcc, k)]}</b>). <span class="c-alarm">Opposite reality.</span>`
+      : `Same sequence, same predictor. <span class="c-alarm">Opposite reality.</span>`;
+    el("#spot-panels").innerHTML = renderPanel(hOcc, "H", k, firstOpen) + renderPanel(eOcc, "E", k, firstOpen);
+    renderSpot3D(hOcc, k, "H");
+    renderSpot3D(eOcc, k, "E");
+    const pairCount = Math.max(H.length, E.length);
+    const cyc = el("#spot-cycle");
+    if (pairCount > 1) {
+      cyc.innerHTML = `<button id="spot-prev" aria-label="previous">‹</button>
+        <span>example ${pairIndex + 1} of ${pairCount}</span><button id="spot-next" aria-label="next">›</button>`;
+      el("#spot-prev").onclick = () => { spot.pairIndex = (spot.pairIndex - 1 + pairCount) % pairCount; renderSpotlight(false); };
+      el("#spot-next").onclick = () => { spot.pairIndex = (spot.pairIndex + 1) % pairCount; renderSpotlight(false); };
+    } else cyc.innerHTML = "";
+  }
+
+  function renderPanel(occ, foldLabel, k, firstOpen) {
+    const p = byId[occ.id], seq = p.sequence, truth = p.true_sse, pred = CF.predict(seq);
+    const flank = 4, start = Math.max(0, occ.pos - flank), end = Math.min(seq.length, occ.pos + k + flank);
+    const stagger = firstOpen && !REDUCE;
+    let cols = "";
+    for (let i = start; i < end; i++) {
+      const core = i >= occ.pos && i < occ.pos + k;
+      cols += `<div class="scol${core ? " core" : ""}">`
+        + `<div class="scell seq">${seq[i]}</div>`
+        + `<div class="scell pred ${SCLASS[pred[i]]}">${pred[i]}</div>`
+        + `<div class="scell tru ${SCLASS[truth[i]]}${stagger ? " pending" : ""}">${truth[i]}</div>`
+        + `</div>`;
+    }
+    const cp = domLabel(pred, occ.pos, k), right = cp === foldLabel;
+    const cap = `Chou-Fasman predicts <b>${SNAMELONG[cp]}</b> here — and it's `
+      + `<span class="${right ? "ok" : "wrong"}">${right ? "right" : "wrong"}</span>`;
+    const pill = foldLabel === "H" ? '<span class="spill h">folds as HELIX</span>' : '<span class="spill e">folds as STRAND</span>';
+    return `<div class="spot-panel">
+      <div class="spot-head"><span class="spid">${occ.id}</span><span class="spname">${escapeHtml(p.name)}</span>${pill}</div>
+      <div class="spot-strip">${cols}</div><div class="spot-cap">${cap}</div>
+      <div class="spot-3d" data-side="${foldLabel}"></div></div>`;
+  }
+
+  function closeSpotlight() {
+    const s = el("#spotlight");
+    if (s.hidden) return;
+    s.classList.add("closing");
+    el("#spot-scrim").hidden = true;
+    setTimeout(() => { s.hidden = true; s.classList.remove("closing"); }, REDUCE ? 0 : 180);
+  }
+
+  /* ---------- Feature E: 3D structure ---------- */
+  let _3dmolLoad = null, mainViewer = null;
+  function ensure3Dmol() {
+    if (typeof $3Dmol !== "undefined") return Promise.resolve();
+    if (_3dmolLoad) return _3dmolLoad;
+    _3dmolLoad = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "lib/3Dmol-min.js"; s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    return _3dmolLoad;
+  }
+  function render3DMain() {
+    const cont = el("#s3d-viewer"), p = state.protein;
+    if (p.custom) { cont.innerHTML = '<div class="s3d-msg">not available for pasted sequences</div>'; mainViewer = null; return; }
+    cont.innerHTML = '<div class="s3d-msg">loading 3Dmol…</div>';
+    ensure3Dmol().then(() => Structure3D.render(cont, {
+      id: p.id, sequence: p.sequence, trueSse: p.true_sse, pred: cur.pred4,
+      isCham: i => cur.cham[i] === "1"
+    })).then(v => { mainViewer = v; })
+      .catch(() => { cont.innerHTML = '<div class="s3d-msg">3D unavailable</div>'; });
+  }
+  function renderSpot3D(occ, k, side) {
+    const cont = document.querySelector('#spot-panels .spot-3d[data-side="' + side + '"]');
+    if (!cont) return;
+    const p = byId[occ.id];
+    ensure3Dmol().then(() => Structure3D.render(cont, {
+      id: p.id, sequence: p.sequence, trueSse: p.true_sse, pred: CF.predict(p.sequence),
+      isCham: i => i >= occ.pos && i < occ.pos + k, bg: "#0e1420"
+    }));
   }
 
   /* ---------- popover ---------- */
@@ -332,8 +554,10 @@
     state.protein = chooseDefault();
     computeCols();
     renderDataset();
+    renderScatter(state.k);
     render();
     initTooltip();
+    initScatter();
     // sync pill to default k
     positionPill();
 
@@ -363,12 +587,27 @@
         x.setAttribute("aria-selected", x === b ? "true" : "false"));
       positionPill();
       render();
+      renderScatter(state.k);
     });
 
     el("#reveal").addEventListener("click", e => {
       state.reveal = !state.reveal;
       e.currentTarget.setAttribute("aria-pressed", String(state.reveal));
       el("#tracks").classList.toggle("truthhidden", !state.reveal);
+    });
+
+    el("#confidence").addEventListener("click", e => {
+      state.confidence = !state.confidence;
+      e.currentTarget.setAttribute("aria-pressed", String(state.confidence));
+      applyConfidence();
+    });
+
+    el("#s3d-toggle").addEventListener("click", e => {
+      state.show3d = !state.show3d;
+      el("#s3d-body").hidden = !state.show3d;
+      e.currentTarget.classList.toggle("open", state.show3d);
+      e.currentTarget.innerHTML = state.show3d ? "<span>▸</span> hide 3D" : "<span>▸</span> show 3D";
+      if (state.show3d) render3DMain();
     });
 
     el("#info").addEventListener("click", () => togglePop(true));
@@ -388,7 +627,9 @@
       const w = el("#seq-warn"); w.className = "seq-warn"; w.textContent = note;
     });
 
-    addEventListener("keydown", e => { if (e.key === "Escape") { togglePop(false); closeSeq(); } });
+    el("#spot-close").addEventListener("click", closeSpotlight);
+    el("#spot-scrim").addEventListener("click", closeSpotlight);
+    addEventListener("keydown", e => { if (e.key === "Escape") { togglePop(false); closeSeq(); closeSpotlight(); } });
 
     addEventListener("scroll", () => el("#appbar").classList.toggle("scrolled", scrollY > 4), { passive: true });
 

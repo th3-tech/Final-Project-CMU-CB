@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chou-Fasman — Where it fails</title>
 <link rel="stylesheet" href="fonts.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
 
@@ -25,9 +25,13 @@
         <button data-k="6" role="tab" aria-selected="true">6</button>
         <button data-k="7" role="tab">7</button>
       </div>
-      <button id="reveal" class="switch" aria-pressed="true" title="Show/hide the true structure track">
+      <button id="reveal" class="switch" aria-pressed="false" title="Show/hide the true structure track">
         <span class="switch-track"><span class="switch-knob"></span></span>
         <span class="switch-label">truth</span>
+      </button>
+      <button id="confidence" class="switch plain" aria-pressed="false" title="Shade predicted cells by how close the Pα/Pβ call was">
+        <span class="switch-track"><span class="switch-knob"></span></span>
+        <span class="switch-label">confidence</span>
       </button>
       <button id="custom-btn" class="ghost-btn" title="Analyze your own sequence"><span>＋</span> sequence</button>
     </div>
@@ -54,7 +58,6 @@
       <div class="legend" id="legend">
         <span class="chip"><i class="sw h"></i>H</span>
         <span class="chip"><i class="sw e"></i>E</span>
-        <span class="chip"><i class="sw t"></i>T</span>
         <span class="chip"><i class="sw c"></i>C</span>
         <span class="chip"><i class="sw alarm"></i>chameleon</span>
         <span class="chip"><i class="tick"></i>mismatch</span>
@@ -64,6 +67,23 @@
       <span>seq</span><span>pred</span><span>true</span>
     </div>
     <div id="tracks" class="tracks"></div>
+  </section>
+
+  <!-- ░░ Feature E: 3D structure ░░ -->
+  <section class="card s3d-card">
+    <div class="s3d-head">
+      <div><h3>3D structure</h3><p class="sub">See where the errors land on the real fold — and how the same chameleon k-mer takes a different shape.</p></div>
+      <button id="s3d-toggle" class="ghost-btn"><span>▸</span> show 3D</button>
+    </div>
+    <div id="s3d-body" class="s3d-body" hidden>
+      <div id="s3d-viewer" class="s3d-viewer"></div>
+      <div class="s3d-legend">
+        <span><i class="s3d-sw" style="background:#3FB37F"></i>correct</span>
+        <span><i class="s3d-sw" style="background:#C0392B"></i>incorrect</span>
+        <span><i class="s3d-sw" style="background:#E84AC4"></i>chameleon k-mer</span>
+        <span class="s3d-hint">drag to rotate · click a residue in the track above to locate it here</span>
+      </div>
+    </div>
   </section>
 
   <div class="two-col">
@@ -79,6 +99,15 @@
       <div id="ds-summary"></div>
     </section>
   </div>
+
+  <!-- ░░ Feature C: aggregate error map ░░ -->
+  <section class="card scatter-card">
+    <h3>Every chain, one dot</h3>
+    <p class="sub">Error rate inside vs. outside chameleon regions, per protein chain. Dots <b>above the diagonal</b>
+      are proteins where Chou-Fasman fails more <i>inside</i> chameleons — the thesis, drawn across the whole set.</p>
+    <div id="scatter-stat" class="scatter-stat"></div>
+    <div id="scatter-wrap" class="scatter-wrap"></div>
+  </section>
 </main>
 
 <!-- ░░ chameleon popover (the reveal) ░░ -->
@@ -118,10 +147,24 @@
 </div>
 <div id="seq-scrim" class="pop-scrim" hidden></div>
 
+<!-- ░░ Feature A: chameleon spotlight ░░ -->
+<div id="spot-scrim" class="spot-scrim" hidden></div>
+<div id="spotlight" class="spotlight" hidden role="dialog" aria-label="Chameleon comparison">
+  <button class="pop-close" id="spot-close" aria-label="Close">×</button>
+  <div class="spot-kmer" id="spot-kmer"></div>
+  <div class="spot-verdict" id="spot-verdict"></div>
+  <div class="spot-panels" id="spot-panels"></div>
+  <div class="spot-cycle" id="spot-cycle"></div>
+  <div class="spot-kicker">The letters are identical. What differs is everything the local window can&rsquo;t see.</div>
+</div>
+
+<div id="compare-chip" class="compare-chip" hidden>⤢ compare</div>
+<div id="scatter-tip" class="scatter-tip" hidden></div>
 <div id="tooltip" class="tooltip" hidden></div>
 
-<script src="data.js"></script>
-<script src="chou_fasman.js"></script>
-<script src="app.js"></script>
+<script src="data.js?v=3"></script>
+<script src="chou_fasman.js?v=3"></script>
+<script src="structure3d.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
