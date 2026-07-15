@@ -112,14 +112,16 @@
     renderProteinBars(p, pred3, cham);
     // the truth toggle is meaningless without a truth track
     const rev = el("#reveal");
-    rev.style.opacity = p.custom ? .4 : 1;
-    rev.style.pointerEvents = p.custom ? "none" : "auto";
+    const hasTruth = p.true_sse != null;
+    rev.style.opacity = p.custom && !hasTruth ? .4 : 1;
+    rev.style.pointerEvents = p.custom && !hasTruth ? "none" : "auto";
     state.first = false;
   }
 
   function renderTitle(p) {
-    const badge = p.custom ? ' <span class="sandbox-badge">sandbox · no truth</span>' : "";
-    const nm = p.custom ? "Pasted sequence" : escapeHtml(p.name);
+    const hasTruth = p.true_sse != null;
+    const badge = p.custom && !hasTruth ? ' <span class="sandbox-badge">sandbox · no truth</span>' : "";
+    const nm = p.custom && !hasTruth ? "Pasted sequence" : escapeHtml(p.name);
     el("#protein-title").innerHTML = `${p.id} &nbsp;<small>${nm} · ${p.sequence.length} aa</small>${badge}`;
   }
 
@@ -302,14 +304,172 @@
   }
 
   /* ---------- custom-sequence sandbox ---------- */
+  function threeLetterToOne(letter) {
+    const map = {
+      ALA: "A", ARG: "R", ASN: "N", ASP: "D", CYS: "C", GLN: "Q", GLU: "E",
+      GLY: "G", HIS: "H", ILE: "I", LEU: "L", LYS: "K", MET: "M", PHE: "F",
+      PRO: "P", SER: "S", THR: "T", TRP: "W", TYR: "Y", VAL: "V"
+    };
+    return map[letter] || "X";
+  }
+  function parseCifLoop(lines, fieldSuffixes) {
+    const rows = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim() !== "loop_") continue;
+      const fields = [];
+      i++;
+      while (i < lines.length && lines[i].trim().startsWith("_")) {
+        fields.push(lines[i].trim());
+        i++;
+      }
+      const indexes = fieldSuffixes.map(sfx => fields.findIndex(f => f.endsWith(sfx)));
+      if (indexes.some(idx => idx < 0)) { continue; }
+      while (i < lines.length) {
+        const rowLine = lines[i].trim();
+        if (!rowLine || rowLine.startsWith("#") || rowLine.startsWith("_") || rowLine.startsWith("loop_") || rowLine.startsWith("save_") || rowLine.startsWith("stop_") || rowLine.startsWith("data_")) break;
+        const vals = rowLine.split(/\s+/).filter(Boolean);
+        const row = {};
+        indexes.forEach((idx, j) => { if (idx >= 0 && vals[idx]) row[fieldSuffixes[j]] = vals[idx]; });
+        if (Object.keys(row).length) rows.push(row);
+        i++;
+      }
+    }
+    return rows;
+  }
+  function parsePdbStructure(text) {
+    const lines = text.split(/\r?\n/);
+    const seqRows = parseCifLoop(lines, ["asym_id", "entity_id", "mon_id", "seq_id"]);
+    const helixRows = parseCifLoop(lines, ["beg_label_asym_id", "end_label_asym_id", "beg_label_seq_id", "end_label_seq_id"]);
+    const sheetRows = parseCifLoop(lines, ["beg_label_asym_id", "end_label_asym_id", "beg_label_seq_id", "end_label_seq_id"]);
+    const byChain = {};
+    for (const row of seqRows) {
+      const chain = row.asym_id;
+      const mon = threeLetterToOne(row.mon_id);
+      if (!chain || mon === "X") continue;
+      if (!byChain[chain]) byChain[chain] = [];
+      byChain[chain].push(mon);
+    }
+    const chains = Object.entries(byChain).filter(([, seq]) => seq.length >= 8);
+    if (!chains.length) return null;
+    chains.sort((a, b) => b[1].length - a[1].length);
+    const [chain, seq] = chains[0];
+    const out = Array(seq.length).fill("C");
+    const applyRanges = (rows, token) => {
+      for (const row of rows) {
+        if (row.beg_label_asym_id !== chain && row.end_label_asym_id !== chain) continue;
+        const start = Number(row.beg_label_seq_id);
+        const end = Number(row.end_label_seq_id);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+        const lo = Math.min(start, end), hi = Math.max(start, end);
+        for (let i = lo - 1; i < Math.min(hi, seq.length); i++) {
+          if (i >= 0 && i < out.length) out[i] = token;
+        }
+      }
+    };
+    applyRanges(helixRows, "H");
+    applyRanges(sheetRows, "E");
+    return { sequence: seq.join(""), true_sse: out.join("") };
+  }
+  async function fetchText(url) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`Unable to fetch ${url}`);
+    return res.text();
+  }
+  async function fetchPdbFasta(code) {
+    const directUrl = `https://www.rcsb.org/fasta/entry/${code}`;
+    const proxyUrl = `https://r.jina.ai/http://www.rcsb.org/fasta/entry/${code}`;
+    try { return await fetchText(directUrl); } catch (err) { return await fetchText(proxyUrl); }
+  }
+  async function fetchPdbMmCif(code) {
+    const directUrl = `https://files.rcsb.org/download/${code}.cif`;
+    const proxyUrl = `https://r.jina.ai/http://files.rcsb.org/download/${code}.cif`;
+    try { return await fetchText(directUrl); } catch (err) { return await fetchText(proxyUrl); }
+  }
+  function openPdb() {
+    el("#pdb-modal").hidden = false;
+    el("#pdb-scrim").hidden = false;
+    setTimeout(() => el("#pdb-input").focus(), 30);
+  }
   function openSeq() {
     el("#seq-modal").hidden = false;
     el("#seq-scrim").hidden = false;
     setTimeout(() => el("#seq-input").focus(), 30);
   }
+  function closePdb() {
+    el("#pdb-modal").hidden = true;
+    el("#pdb-scrim").hidden = true;
+  }
   function closeSeq() {
     el("#seq-modal").hidden = true;
     el("#seq-scrim").hidden = true;
+  }
+  async function fetchPdbFasta(code) {
+    const directUrl = `https://www.rcsb.org/fasta/entry/${code}`;
+    const proxyUrl = `https://r.jina.ai/http://www.rcsb.org/fasta/entry/${code}`;
+    try {
+      return await fetchText(directUrl, code);
+    } catch (err) {
+      return await fetchText(proxyUrl, code);
+    }
+  }
+  async function fetchText(url, code) {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error(`PDB ${code} not found`);
+    return res.text();
+  }
+  async function importPdb() {
+    const code = el("#pdb-input").value.trim().toUpperCase();
+    const warn = el("#pdb-warn");
+    warn.className = "seq-warn";
+    warn.textContent = "";
+    if (!/^[A-Z0-9]{4}$/.test(code)) {
+      warn.className = "seq-warn err";
+      warn.textContent = "Enter a valid 4-character PDB code.";
+      return;
+    }
+    try {
+      let seq = "";
+      let trueSse = null;
+      try {
+        const cifText = await fetchPdbMmCif(code);
+        const parsed = parsePdbStructure(cifText);
+        if (parsed && parsed.sequence) {
+          seq = parsed.sequence;
+          trueSse = parsed.true_sse;
+        }
+      } catch (cifErr) {
+        // fall back to FASTA if mmCIF parsing is unavailable
+      }
+      if (!seq) {
+        let raw = await fetchPdbFasta(code);
+        const idx = raw.indexOf(">");
+        if (idx < 0) throw new Error("No FASTA data returned.");
+        raw = raw.slice(idx);
+        const lines = raw.split(/\r?\n/);
+        const entries = [];
+        let current = null;
+        for (const line of lines) {
+          if (line.startsWith(">")) {
+            if (current !== null) entries.push(current);
+            current = "";
+          } else if (current !== null) {
+            current += line.trim();
+          }
+        }
+        if (current !== null) entries.push(current);
+        seq = entries[0] || "";
+      }
+      if (!seq) throw new Error("No polymer sequence returned.");
+      state.protein = { id: `PDB:${code}`, name: `PDB ${code}`, sequence: seq, true_sse: trueSse, custom: true };
+      state.first = true;
+      closePdb();
+      computeCols();
+      render();
+      window.scrollTo({ top: 0, behavior: REDUCE ? "auto" : "smooth" });
+    } catch (err) {
+      warn.className = "seq-warn err";
+      warn.textContent = err.message || "Unable to fetch that PDB entry.";
+    }
   }
   function analyzeCustom() {
     const { seq, note } = cleanSequence(el("#seq-input").value);
@@ -374,6 +534,14 @@
     el("#info").addEventListener("click", () => togglePop(true));
     el("#pop-close").addEventListener("click", () => togglePop(false));
     el("#pop-scrim").addEventListener("click", () => togglePop(false));
+
+    el("#import-btn").addEventListener("click", openPdb);
+    el("#pdb-close").addEventListener("click", closePdb);
+    el("#pdb-scrim").addEventListener("click", closePdb);
+    el("#pdb-go").addEventListener("click", importPdb);
+    el("#pdb-input").addEventListener("input", () => {
+      const w = el("#pdb-warn"); w.className = "seq-warn"; w.textContent = "";
+    });
 
     el("#custom-btn").addEventListener("click", openSeq);
     el("#seq-close").addEventListener("click", closeSeq);
